@@ -155,11 +155,71 @@
     </a>
     <a id="emr" class="product_details_popup_text">
    	 EMR:
+
+<!--
+Notes from the last session:
+
+http://tech.marksblogg.com/billion-nyc-taxi-rides-presto-emr.htmlhttps://aws.amazon.com/blogs/big-data/analyze-data-with-presto-and-airpal-on-amazon-emr/
+
+
+https://docs.aws.amazon.com/cli/latest/reference/emr/create-cluster.html
+
+aws emr create-cluster --name "Test cluster" --release-label emr-4.0.0 --applications Name=Hadoop Name=Hive Name=Pig --tags "costCenter=marketing" --use-default-roles --ec2-att
+ributes KeyName=myKey --instance-type m4.large --instance-count 3
+
+
+Which instance type for each node type?  https://docs.aws.amazon.com/emr/latest/ManagementGuide/emr-plan-instances-guidelines.html
+
+Scaling notes  https://docs.aws.amazon.com/emr/latest/ManagementGuide/emr-scale-on-demand.html
+
+By default, the total number of EC2 instances you can run on a single AWS account is 20.
+
+By default, Amazon EMR configures the Presto web interface on the Presto coordinator to use port 8889.
+
+--auto-terminate | --no-auto-terminate (boolean)
+
+
+-->
          <blockquote>
            - Does not support multi-user authentication, everything is accessed via an SSH tunnel to the master node.
            <hr>
-           Sample launch command:<br>
+           Sample launch command leveraging spot instances:<br>
            <pre>
+   $ aws emr create-cluster \
+      --applications \
+        Name=Hadoop \
+        Name=Hive \
+      --ec2-attributes '{
+          "KeyName": "emr",
+          "InstanceProfile": "EMR_EC2_DefaultRole",
+          "AvailabilityZone": "eu-west-1a",
+          "EmrManagedSlaveSecurityGroup": "sg-89cd3eff",
+          "EmrManagedMasterSecurityGroup": "sg-d4cc3fa2"
+      }' \
+      --service-role EMR_DefaultRole \
+      --release-label emr-4.3.0 \
+      --log-uri 's3n://my-bucket-name/elasticmapreduce/' \
+      --name 'cluster_test_001' \
+      --instance-groups '[{
+          "InstanceCount": 2,
+          "BidPrice": "0.048",
+          "InstanceGroupType": "CORE",
+          "InstanceType": "m3.xlarge",
+          "Name": "Core instance group - 2"
+      }, {
+          "InstanceCount": 2,
+          "BidPrice": "0.048",
+          "InstanceGroupType": "TASK",
+          "InstanceType": "m3.xlarge",
+          "Name": "Task instance group - 3"
+      }, {
+          "InstanceCount": 1,
+          "InstanceGroupType": "MASTER",
+          "InstanceType": "m3.xlarge",
+          "Name": "Master instance group - 1"
+      }]' \
+      --region eu-west-1
+
            </pre>
          </blockquote>
     </a>
