@@ -73,7 +73,108 @@
         cellspacing: 0;
   }
 
+.div_product_details {
+    display: none; /* Hidden by default */
+    position: fixed; /* Stay in place */
+    z-index: 1; /* Sit on top */
+    padding-top: 100px; /* Location of the box */
+    left: 0;
+    top: 0;
+    width: 100%; /* Full width */
+    height: 100%; /* Full height */
+    overflow: auto; /* Enable scroll if needed */
+    background-color: rgb(0,0,0); /* Fallback color */
+    background-color: rgba(0,0,0,0.4); /* Black w/ opacity */
+}
+
+/* Product details */
+.div_product_details_content {
+    background-color: #fefefe;
+    margin: auto;
+    padding: 20px;
+    border: 1px solid #888;
+    width: 80%;
+    font-family: "Arial", sans-serif;
+    font-size: 12px;
+
+}
+
+/* The Close Button */
+.close {
+    color: #aaaaaa;
+    float: right;
+    font-size: 28px;
+    font-weight: bold;
+}
+
+.close:hover,
+.close:focus {
+    color: #000;
+    text-decoration: none;
+    cursor: pointer;
+}
 </style>
+
+<html><body>
+
+
+<!-- The Modal -->
+<div id="product_details_popup" class="div_product_details">
+
+  <!-- Modal content -->
+  <div class="div_product_details_content">
+    <span class="close">&times;</span>
+    <a id="redshift" class="product_details_popup_text">
+         Redshift:
+         <blockquote>
+           - Requires the user to have an SQL tool installed somewhere (e.g. SQL/J), supports ODBC and JDBC access<br>
+           - Pricing is the same as Athena, still requires you to maintain a cluster.<br>
+         </blockquote>
+
+         <hr>
+         Redshift Spectrum:
+         <blockquote>
+           - Intended for users who wish to archive data out of Redshift's Postgres storage and into S3<br>
+           - Pricing is the same as Athena, still requires you to maintain a cluster.<br>
+         </blockquote>
+    </a>
+    <a id="athena" class="product_details_popup_text">
+	Athena:
+         <blockquote>
+           - Uses a web console for managing the database catalogs and running queries<br>
+           - Stores results to S3 for app retrieval<br>
+           - Primarily intended as a tool for ad-hoc queries, however performance appears to be competitive with the EMR solutions<br>
+         </blockquote>
+    </a>
+    <a id="aurora" class="product_details_popup_text">
+	Aurora:
+         <blockquote>
+           - Considered a subset of the RDS offering<br>
+         </blockquote>
+
+    </a>
+    <a id="emr" class="product_details_popup_text">
+   	 EMR:
+         <blockquote>
+           - Does not support multi-user authentication, everything is accessed via an SSH tunnel to the master node.
+           <hr>
+           Sample launch command:<br>
+           <pre>
+           </pre>
+         </blockquote>
+    </a>
+    <a id="rds" class="product_details_popup_text">
+	RDS:
+         <blockquote>
+           - What user-maintenance is required for the EC2 instances?<br>
+         </blockquote>
+    </a>
+
+
+  </div>
+
+</div>
+
 <table border=0 cellpadding=0 cellspacing=0>
   <tr>
     <td valign=middle align=right>
@@ -87,7 +188,7 @@
           <td class="olap_label">OLAP</td> 
           <td class="td_progress_arrow"><img src="progress_arrow.png" class="img_progress_arrow"></td>
           <td><table border=0><tr>
-            <td class="td_product_panel">
+            <td class="td_product_panel" onClick="showProductDetails('redshift');">
              <table cellpadding=0 cellspacing=0>
                <tr>
                  <td><img src="redshift.png" class="img_product_icon"></td>
@@ -112,7 +213,7 @@
             </table>
           </td>
           <td class="td_progress_arrow"><img src="progress_arrow.png" class="img_progress_arrow"></td>
-          <td class="td_product_panel">
+          <td class="td_product_panel"  onClick="showProductDetails('emr');">
              <table cellpadding=0 cellspacing=0>
                <tr>
                  <td><img src="emr.png" class="img_product_icon"></td>
@@ -128,7 +229,7 @@
                     - Elastic scale-out solution for Hadoop-based applications<br>
                     - Runs Hadoop, Spark, HBase, or Presto<br>
                     - Uses a Hive instance or Glue for the metadata repository<br>
-                    - Uses an HDFS instance for storage<br>
+                    - Uses HDFS instance for storage<br>
                     - Can leverage spot pricing<br>
                     - Three node types: master, core, and task<br>
                     - "Bootstrap Action" feature allows custom software overlays<br>
@@ -138,7 +239,7 @@
             </table>
           </td>
           <td class="td_progress_arrow"><img src="progress_arrow.png" class="img_progress_arrow"></td>
-          <td class="td_product_panel">
+          <td class="td_product_panel"  onClick="showProductDetails('athena');">
              <table cellpadding=0 cellspacing=0>
                <tr>
                  <td><img src="athena.png" class="img_product_icon"></td>
@@ -172,7 +273,7 @@
           <td class="olap_label">OLTP</td>
           <td class="td_progress_arrow"><img src="progress_arrow.png" class="img_progress_arrow"></td>
           <td><table border=0><tr> <!-- begin all OLTP products -->
-          <td class="td_product_panel">
+          <td class="td_product_panel"  onClick="showProductDetails('rds');">
              <table cellpadding=0 cellspacing=0>
                <tr>
                  <td><img src="aurora.png" class="img_product_icon"></td>
@@ -195,7 +296,7 @@
           </td>
  
           <td class="td_progress_arrow"><img src="progress_arrow.png" class="img_progress_arrow"></td>
-          <td class="td_product_panel">
+          <td class="td_product_panel"  onClick="showProductDetails('aurora');">
              <table cellpadding=0 cellspacing=0>
                <tr>
                  <td><img src="aurora.png" class="img_product_icon"></td>
@@ -266,3 +367,44 @@
     </td>
   </tr>
 </table>
+
+
+
+</body>
+</html>
+
+<script>
+
+  var modalProductDetailsPopup = document.getElementById('product_details_popup');
+
+
+  // Get the <span> element that closes the popup
+  var span = document.getElementsByClassName("close")[0];
+
+
+  // When the user clicks on <span> (x), close the modalProductDetailsPopup
+  span.onclick = function() {
+    modalProductDetailsPopup.style.display = "none";
+  }
+
+  // When the user clicks anywhere outside of the modalProductDetailsPopup, close it
+  window.onclick = function(event) {
+    if (event.target == modalProductDetailsPopup) {
+        modalProductDetailsPopup.style.display = "none";
+    }
+  }
+
+  function showProductDetails(productName) {
+    modalProductDetailsPopup.style.display="block";
+    var arrayOfProductDetailAnchors = document.getElementsByClassName("product_details_popup_text");
+    for (var i in arrayOfProductDetailAnchors) {
+      if (arrayOfProductDetailAnchors[i].id == productName) {
+        arrayOfProductDetailAnchors[i].style.display="block";
+      } else arrayOfProductDetailAnchors[i].style.display="none";
+        
+    }
+    
+  }
+</script>
+
+
