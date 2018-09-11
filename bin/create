@@ -1,0 +1,516 @@
+#!/bin/sh
+
+# This program will create an ansible "control" node which will serve as the master for the demo.  
+#
+# For the initial setup on the Mac OS X client "a.k.a. The Demo Laptop", run the following (this should already be done):
+#   - pip install awscli --user
+#   - Add ~/Library/Python/2.7/bin/aws to path
+#   - Create a user via the administrative console in the "admin" group
+#   - Run aws configure using the ID generated above (us-west-2) output format=json
+#   - Test the CLI:
+#         aws ec2 describe-regions --output table
+#
+
+# TO DO:
+# Change key location to ./keys
+# Something is wrong with the set_hostname IP returned for the host file entry
+
+####### User-defined customizations (adjust for future demos)
+ingress_network_cidr_block="0.0.0.0/0"
+# Not implemented, existing ssh key must be "false"
+use_existing_ssh_key=false
+ec2_access_key_name="key_ansible_ec2_master_access_key"
+ec2_access_key_file="/Users/spauldingx2/aws/keys/key_ansible_ec2_master_access_key.pem"
+
+##### Suggest not changing these
+# aws-linux
+ec2_ami_to_use="ami-6b8cef13" 
+# RHEL 7
+#ec2_ami_to_use="ami-28e07e50"
+ec2_instance_access_user_id="ec2-user"
+# Ubuntu
+#ec2_ami_to_use="ami-6e1a0117"
+#ec2_instance_access_user_id="ubuntu"
+ansible_ec2_instance_name="ansible_ec2_master_instance"
+ec2_instance_simple_ssh_security_group_name="sg_ansible_ec2_master_instance"
+ansible_ec2_instance_availability_zone="us-west-2b"
+# Didn't implement multipe tags
+ansible_ec2_instance_tag_list=""
+DEBUG=1
+
+#
+# Terminate the control node and all resources
+#
+cleanup() {
+  vm_instance_id=`aws ec2 describe-instances --filters "Name=tag-value,Values=$ansible_ec2_instance_name" --query Reservations[0].Instances[0].InstanceId | sed 's/\"//g'`
+  if [ x$vm_instance_id == xnull ]; then
+    echo "The instance name [$ansible_ec2_instance_name] was not found"
+  else
+    aws ec2 terminate-instances --instance-ids $vm_instance_id
+    echo -e "Waiting for [$ansible_ec2_instance_name] to terminate...\c"
+    for retry in 1 2 3 4 5; do
+      ansible_ec2_instance_state=`aws ec2 describe-instances --filter "Name=tag-value,Values=ansible_ec2_master_instance" --query Reservations[*].Instances[*].State.Name --output text`
+      if [ x$ansible_ec2_instance_state != "xterminated" ]; then
+        echo  "Waiting for state \"terminated\".  Current state: $ansible_ec2_instance_state"
+        sleep 10
+      fi
+      echo ""
+    done
+    ansible_ec2_instance_state=`aws ec2 describe-instances --filter "Name=tag-value,Values=ansible_ec2_master_instance" --query Reservations[*].Instances[*].State.Name --output text`
+    if [ $ansible_ec2_instance_state != "terminated" ]; then
+        echo "ERROR!  Instance not terminated"
+        exit 5
+    fi
+  fi
+  aws ec2 delete-key-pair --key-name $ec2_access_key_name
+  aws ec2 delete-security-group --group-name $ec2_instance_simple_ssh_security_group_name
+}
+
+
+set_hostname() {
+  public_ip_address=$1
+  ssh_key_file=$2
+  new_hostname=$3
+
+  if [ DEBUG ]; then 
+    echo "DEBUG: set_hostname(): > : { \"public_ip_address\" : \"$1\", \"ssh_key_file\" : \"$2\", \"new_hostname\" : \"$3\" }"
+  fi
+  if [ $# -lt 3 ]; then 
+    echo "ERROR: set_hostname(): Invalid argument count [$#]"
+    exit 1
+  fi
+  if [ x$public_ip_address == xnull ]; then
+    echo "ERROR: set_hostname(): public_ip_address argument is null"
+    exit 1
+  else
+    echo "DEBUG: set_hostname(): executing ssh -i $ssh_key_file $ec2_instance_access_user_id@$public_ip_address sudo hostname $new_hostname";
+  fi
+
+  ### Cache the new host's key on the local machine to enable remote SSH commands
+  ssh-keyscan -H $public_ip_address  >> ~/.ssh/known_hosts
+
+  #### Set the prompt for ec2-user so we know which "host" this is
+  ssh -i $ssh_key_file $ec2_instance_access_user_id@$public_ip_address "sudo hostname $new_hostname"
+  echo "Add this entry to your /etc/hosts: $public_ip_address $new_hostname"
+}
+
+get_instance_private_ip_address() {
+  instance_name=$1
+  ip_address=`aws ec2 describe-instances --filters "Name=tag-value,Values=$instance_name" "Name=instance-state-name,Values=running" --query Reservations[0].Instances[0].PrivateIpAddress --output text`
+  if [ x$ip_address == xnull ] ||  [ x$ip_address == x ]; then
+    echo "ERROR: get_instance_private_ip_address(): Could not retrieve an ip address for instance: [$instance_name]"
+    exit 1
+  else
+    echo $ip_address
+  fi
+}
+
+get_instance_public_ip_address() {
+  instance_name=$1
+
+  ip_address=`aws ec2 describe-instances --filters "Name=tag-value,Values=$instance_name" "Name=instance-state-name,Values=running" --query Reservations[0].Instances[0].PublicIpAddress | sed 's/\"//g'`
+  if [ x$ip_address == xnull ] ||  [ x$ip_address == x ]; then
+    echo "ERROR: get_instance_public_ip_address(): Could not retrieve an ip address for instance: [$instance_name]"
+    exit 1
+  fi
+  echo $ip_address
+}
+
+
+create_simple_ec2_SSH_HTTP_security_group() {
+  security_group_name_to_create=$1
+  ingress_cidr_block=$2
+
+  if [ -z $security_group_name_to_create ] || [ -z $ingress_cidr_block ]; then
+    echo "ERROR: Invalid security group name [$security_group_name_to_create] in create_simple_ec2_SSH_HTTP_security_group()"
+    exit 1
+  fi
+
+  echo "Checking for security group [$security_group_name_to_create]..."
+  existing_security_group_name=`aws ec2 describe-security-groups --group-name $security_group_name_to_create --query SecurityGroups[0].GroupName 2>/dev/null | sed 's/\"//g'` 
+  # WARNING:  We exit here if the group exists, but don't check the authorizations
+  if [ x$existing_security_group_name != "x$security_group_name_to_create" ]; then
+    echo "Creating security group [$security_group_name_to_create]...."
+    aws ec2 create-security-group --group-name $security_group_name_to_create --description "Ability to SSH to EC2 instances and run commands"
+    aws ec2 authorize-security-group-ingress --group-name $security_group_name_to_create --protocol tcp --port 22 --cidr $ingress_cidr_block
+    aws ec2 authorize-security-group-ingress --group-name $security_group_name_to_create --protocol tcp --port 8080 --cidr $ingress_cidr_block
+    aws ec2 authorize-security-group-ingress --group-name $security_group_name_to_create --protocol icmp --port -1 --cidr $ingress_cidr_block
+
+    new_security_group_name=`aws ec2 describe-security-groups --group-names $security_group_name_to_create --query SecurityGroups[0].GroupName 2>/dev/null | sed 's/\"//g'`
+    if [ x$new_security_group_name != x$security_group_name_to_create ]; then
+      echo "Fatal error, could not create security group (security_group_name from create command came back as $new_security_group_name)"
+      exit 1
+    fi
+  fi
+  #export ansible_ec2_instance_security_group_id=`aws ec2 describe-security-groups --group-names sg_ec2_ssh --query SecurityGroups[0].GroupId | sed 's/\"//g'`
+}
+
+create_key_pair() {
+  # WARNING: For some reason the key pair comes out with extra lines that need to be trimmed, it is not Linux CLI "ssh -i <key-file>" ready
+  key_pair_name=$1
+  private_key_file=$2
+
+  if [ -z $key_pair_name ] || [ -z $private_key_file ]; then
+    echo "ERROR: Invalid key_pair_name in  create_key_pair()"
+    exit 2
+  fi
+
+  echo "Checking for SSH key [$key_pair_name]..."
+  existing_key_name=`aws ec2 describe-key-pairs --key-name $key_pair_name --query KeyPairs[0].KeyName 2>/dev/null | sed 's/\"//g' `
+  if [ x$existing_key_name != x$key_pair_name ]; then
+    echo "Creating SSH key [$key_pair_name]..."
+    aws ec2 create-key-pair --key-name $key_pair_name --output text > $private_key_file
+    new_key_name=`aws ec2 describe-key-pairs --key-name $key_pair_name --query KeyPairs[0].KeyName | sed 's/\"//g'`
+    if [ -r $private_key_file ]; then 
+      chmod go-rwx $private_key_file
+    else 
+      echo "ERROR: Could not locate private key file [$private_key_file] after creating key pair in create_key_pair()"
+      exit 3
+    fi
+    if [ x$new_key_name != x$key_pair_name ]; then
+      echo "Fatal error, could not create key pair [$key_pair_name] in create_key_pair():  new_key_name from create command came back as [$new_key_name]"
+      exit 2
+    fi
+  fi
+
+}
+
+create_instance() {
+  ami_to_use=$1
+  #instance_type_to_create=$2
+  instance_type_to_create=t2.micro
+  tag_list=$3
+  security_group_name=$4
+  ssh_key_name=$5
+  instance_name=$6
+
+  echo "Checking for the VM instance..."
+  existing_vm_instance_id=`aws ec2 describe-instances --filters "Name=tag-value,Values=$instance_name" --query Reservations[0].Instances[0].InstanceId | sed 's/\"//g'`
+  if [ x$existing_vm_instance_id == xnull ]; then
+    echo "Creating the VM..."
+  else 
+   echo "Instance exists... TO DO: Check if in a terminated state and continue..."
+  fi
+  ec2_run_instance_command="aws ec2 run-instances --image-id $ami_to_use --security-groups $security_group_name --count 1 --instance-type $instance_type_to_create --key-name $ssh_key_name --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$instance_name}]" --placement AvailabilityZone=$ansible_ec2_instance_availability_zone"
+  echo "Creating instance with: $ec2_run_instance_command"
+  $ec2_run_instance_command
+  sleep 5
+  new_vm_instance_id=`aws ec2 describe-instances --filters "Name=tag-value,Values=$instance_name" --query Reservations[0].Instances[0].InstanceId | sed 's/\"//g'`
+  if [ x$new_vm_instance_id == xnull ]; then
+      echo "Fatal error, could not create instance in create_instance()  (new_instance_id after create came back as [$new_instance_id])"
+      exit 3
+  fi
+}
+
+connect() {
+  public_ip_address=$1
+  ssh_key_file=$2
+
+  ### Cache the new host's key on the local machine to enable remote SSH commands
+  ssh-keyscan -H $public_ip_address  >> ~/.ssh/known_hosts
+
+  ssh -i $ssh_key_file $ec2_instance_access_user_id@$public_ip_address 
+  
+}
+
+configure_instance_with_ansible() {
+  ec2_instance_access_user_id=ec2-user
+  public_ip_address=$1
+  ssh_key_file=$2
+
+  ### Cache the new host's key on the local machine to enable remote SSH commands
+  ssh-keyscan -H $public_ip_address  >> ~/.ssh/known_hosts
+
+  ### Setup the ansible runtime
+  echo ssh -i $ssh_key_file $ec2_instance_access_user_id@$public_ip_address "sudo pip install ansible && sudo yum install -y git"
+
+  ### Configure the localhost (or target nodes) for ansible control via this ID
+  ssh -i $ssh_key_file $ec2_instance_access_user_id@$public_ip_address "ssh-keygen -t rsa -N \"\" -f /home/ec2-user/.ssh/id_rsa"
+  ssh -i $ssh_key_file $ec2_instance_access_user_id@$public_ip_address "cat /home/ec2-user/.ssh/id_rsa.pub >> /home/ec2-user/.ssh/authorized_keys "
+  ssh -i $ssh_key_file $ec2_instance_access_user_id@$public_ip_address ssh-keyscan -H localhost  /home/ec2-user/.ssh/known_hosts
+
+}
+
+
+configure_instance_with_elastic() {
+  # https://github.com/elastic/ansible-elasticsearch
+
+  ec2_instance_access_user_id=ec2-user
+  public_ip_address=$1
+  ssh_key_file=$2
+
+  #### Download a playbook for Elastic.
+  ssh -i $ssh_key_file $ec2_instance_access_user_id@$public_ip_address "sudo mkdir -p /var/ansible/playbooks && \
+                                                                        sudo chown ec2-user /var/ansible/playbooks && \
+                                                                        cd /var/ansible/playbooks && \
+                                                                        git clone https://github.com/elastic/ansible-elasticsearch.git && \
+                                                                        echo ."
+
+  echo ssh -i $ssh_key_file $ec2_instance_access_user_id@$public_ip_address "sudo mkdir -p /var/ansible/playbooks/ansible-elasticsearch-customized && \
+                                                                        sudo chown ec2-user /var/ansible/playbooks/ansible-elasticsearch-customized && \
+                                                                        cd /var/ansible/playbooks/ansible-elasticsearch-customized && \
+                                                                        echo localhost > hosts && \
+                                                                        echo -e '- name: Simple Example \n  hosts: localhost\n  roles:\n    - { role: elasticsearch, es_instance_name: \"node1\" } \n  vars:\n' > /var/ansible/playbooks/ansible-elasticsearch-customized/site.yml && \
+                                                                        mkdir  mkdir /var/ansible/playbooks/ansible-elasticsearch-customized/roles && \
+                                                                        ln -s /var/ansible/playbooks/ansible-elasticsearch /var/ansible/playbooks/ansible-elasticsearch-customized/roles/elasticsearch && \
+                                                                        ansible-playbook -i hosts site.yml -vvv && \
+                                                                        echo ."
+
+}
+
+configure_instance_with_jboss() {
+  ec2_instance_access_user_id=ec2-user
+  public_ip_address=$1
+  ssh_key_file=$2
+
+  #### Download a playbook for JBoss.  Note that this would come from our corp github server, and would be modified for our installation customization
+  ssh -i $ssh_key_file $ec2_instance_access_user_id@$public_ip_address "sudo mkdir -p /var/ansible/playbooks && \
+                                                                        sudo chown ec2-user /var/ansible/playbooks && \
+                                                                        cd /var/ansible/playbooks && \
+                                                                        git clone https://github.com/comicide/ansible-examples.git && \
+                                                                        echo ."
+  #### Run the installation
+  ssh -i $ssh_key_file $ec2_instance_access_user_id@$public_ip_address "cd /var/ansible/playbooks/ansible-examples/jboss-standalone && \
+                                                                        echo localhost > hosts && \
+                                                                        ansible-playbook -i hosts site.yml -vvv && \
+                                                                        echo ."
+}
+
+
+check_prerequisites() {
+  if [ `aws --version 2>&1 | grep "aws-cli" | wc -c` -gt 2 ]; then 
+    return 0
+  else 
+    echo "\n\nERROR: Check that the AWS CLI is installed and in the current PATH\n\n"
+    return 1
+  fi
+}
+
+#
+# Create the ansible EC2 control node
+#
+create_ansible_ec2_instance() {
+ #create_simple_ec2_SSH_HTTP_security_group $ec2_instance_simple_ssh_security_group_name $ingress_network_cidr_block
+ #create_key_pair $ec2_access_key_name $ec2_access_key_file
+ # Need to manually trim the key file here
+ #create_instance $ec2_ami_to_use t1.micro null $ec2_instance_simple_ssh_security_group_name $ec2_access_key_name $ansible_ec2_instance_name
+ echo ""
+}
+
+
+install_docker_engine_on_rhel7() {
+  ec2_instance_hostname=$1
+  ec2_access_key_file=$2
+  ssh -i $ec2_access_key_file $ec2_instance_access_user_id@$ec2_instance_hostname "\
+  sudo yum install -y yum-utils && \
+  sudo yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo && \
+  sudo yum makecache fast && \
+  curl -kO https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm && \
+  sudo yum install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm && \
+  sudo yum install -y pigz && \
+  sudo curl -kO http://mirror.centos.org/centos/7/extras/x86_64/Packages/container-selinux-2.55-1.el7.noarch.rpm && \
+  sudo yum install -y ./container-selinux-2.55-1.el7.noarch.rpm && \
+  sudo yum install -y docker-ce && \
+  sudo service docker start "
+
+  
+}
+
+setup_docker_cluster() {
+  cluster_member_list="master worker1 worker3"
+
+if [  ]; then
+  # Add Swarm ports to the cluster
+  aws ec2 authorize-security-group-ingress --group-name $ec2_instance_simple_ssh_security_group_name --protocol tcp --port 2377 --cidr $ingress_network_cidr_block
+  aws ec2 authorize-security-group-ingress --group-name $ec2_instance_simple_ssh_security_group_name --protocol tcp --port 7946 --cidr $ingress_network_cidr_block
+  aws ec2 authorize-security-group-ingress --group-name $ec2_instance_simple_ssh_security_group_name --protocol udp --port 7946 --cidr $ingress_network_cidr_block
+  aws ec2 authorize-security-group-ingress --group-name $ec2_instance_simple_ssh_security_group_name --protocol udp --port 4789 --cidr $ingress_network_cidr_block
+fi
+
+if [ 1  ]; then
+  #install_docker_engine_on_rhel7 worker2 $ec2_access_key_file
+  connect master $ec2_access_key_file
+  exit 1
+fi
+  # At the moment, Docker is installed on these nodes
+  
+  # We'll use "manager" here as the master
+  manager_private_ip_address=`get_instance_private_ip_address master`
+  if [ DEBUG ]; then echo "DEBUG: setup_docker_cluster(): master private ip=$manager_private_ip_address"; fi
+  
+  # Create the cluster
+  #ssh -i $ec2_access_key_file $ec2_instance_access_user_id@master sudo docker swarm init --advertise-addr $manager_private_ip_address
+  # docker swarm join-token worker
+
+ # Add cluster members
+ for managed_node in worker1 worker2 worker3; do
+   ssh -i $ec2_access_key_file $ec2_instance_access_user_id@$managed_node sudo docker swarm join --token SWMTKN-1-4u9rqs34ebaojyqgvjqk6dm298isl3hy7d0tvqo7lm8x7jo4ym-aqo8gnfqxqdditv2j5xh9u3id 172.31.36.243:2377
+ done
+  
+}
+
+setup_simple_kubernetes_cluster() {
+
+  # Note that the current aws-linux image has a problem with the latest Kubernetes release from this package, in that
+  #   the aws-linux yum repo's version of iptables is a bit old, so moved to RHEL 7
+
+  #cluster_member_list="master worker1 worker2"
+  cluster_member_list="worker_aws"
+if [   ]; then
+  connect master $ec2_access_key_file
+  exit 1
+fi
+
+
+  ### Create the instances and set their hostnames locally.  The hostnames will need to be added to the /etc/hosts file where
+  ###       this program is run
+if [   ]; then
+  for kubernetes_host in $cluster_member_list; do
+    create_instance $ec2_ami_to_use t1.micro null $ec2_instance_simple_ssh_security_group_name $ec2_access_key_name $kubernetes_host && sleep 20
+    set_hostname `get_instance_public_ip_address $kubernetes_host` $ec2_access_key_file $kubernetes_host
+    connect `get_instance_public_ip_address $kubernetes_host` $ec2_access_key_file
+    echo ""
+  done
+fi
+
+
+if [   ]; then
+  for kubernetes_host in $cluster_member_list; do
+    # Cache the host key locally to enable SSH commands
+    ssh-keyscan -H $kubernetes_host  >> ~/.ssh/known_hosts
+    # We will create the yum repo file for the kubernetes repository locally and push it up
+    cat <<EOF > kubernetes.repo
+[kubernetes]
+name=Kubernetes
+baseurl=https://packages.cloud.google.com/yum/repos/kubernetes-el7-x86_64
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=https://packages.cloud.google.com/yum/doc/yum-key.gpg https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg
+EOF
+    scp -i $ec2_access_key_file kubernetes.repo $ec2_instance_access_user_id@$kubernetes_host:/home/$ec2_instance_access_user_id/kubernetes.repo
+    rm kubernetes.repo
+
+    ssh -i $ec2_access_key_file $ec2_instance_access_user_id@$kubernetes_host "sudo cp /home/$ec2_instance_access_user_id/kubernetes.repo /etc/yum.repos.d/kubernetes.repo && \
+                                                                               sudo yum install -y yum-utils && \
+                                                                               sudo yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo && \
+                                                                               sudo yum makecache fast && \
+                                                                               curl -kO http://mirror.centos.org/centos/7/extras/x86_64/Packages/container-selinux-2.55-1.el7.noarch.rpm && \
+                                                                               sudo yum install -y ./container-selinux-2.55-1.el7.noarch.rpm && \
+                                                                               curl -kO https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm && \
+                                                                               sudo yum install –y ./epel-release-latest-7.noarch.rpm && \
+                                                                               sudo yum install –y pigz && \
+                                                                               sudo yum install -y docker-ce && \
+                                                                               sudo service docker start && \
+                                                                               sudo yum install  -y kubelet kubeadm kubectl"
+                                                                               #systemctl enable kubelet && systemctl start kubelet
+ done
+fi
+
+
+if [  ]; then
+ # Create a hosts file and push it up to all nodes
+ echo "" > localhosts_file
+ for kubernetes_host in $cluster_member_list; do
+   echo `get_instance_public_ip_address $kubernetes_host` $kubernetes_host >> localhosts_file
+ done
+ for kubernetes_host in $cluster_member_list; do
+   scp -i $ec2_access_key_file localhosts_file $ec2_instance_access_user_id@$kubernetes_host:/home/$ec2_instance_access_user_id/kubernetes_host
+   ssh -i $ec2_access_key_file $ec2_instance_access_user_id@$kubernetes_host "cat /home/$ec2_instance_access_user_id/kubernetes_host | sudo tee -a /etc/hosts"
+ done
+ rm localhosts_file
+fi
+
+ ## On the master, start kubeadm to initialize the cluster
+ ssh -i $ec2_access_key_file $ec2_instance_access_user_id@master sudo systemctl enable kubelet.service && systemctl enable docker.service && \
+                                                                 sudo kubeadm init --apiserver-advertise-address `get_instance_public_ip_address master`
+
+
+
+
+  
+if [ ]; then
+  sudo yum install -y docker
+  docker run -d --name some-clickhouse-server --ulimit nofile=262144:262144 yandex/clickhouse-server
+  docker run -it --rm --link some-clickhouse-server:clickhouse-server yandex/clickhouse-client --host clickhouse-server
+  #start server instance with custom configuration
+  #$ docker run -d --name some-clickhouse-server --ulimit nofile=262144:262144 -v
+  https://clickhouse.yandex/tutorial.html
+  https://blog.sourcerer.io/a-kubernetes-quick-start-for-people-who-know-just-enough-about-docker-to-get-by-71c5933b4633
+  https://clickhouse.yandex/tutorial.html
+  https://clickhouse.yandex/docs/en/operations/tips/
+  https://medium.com/containermind/how-to-create-a-kubernetes-cluster-on-aws-in-few-minutes-89dda10354f4
+
+ # Ubuntu (incomplete)
+  sudo apt-get update
+  sudo apt-get install -y docker.io
+  # Update /etc/hosts
+  sudo service docker start
+  sudo chown ubuntu /var/run/docker.sock
+  kubelet kubeadm kubectl
+
+ # AWS
+  sudo yum update
+  sudo yum install -y http://mirror.centos.org/centos/7/os/x86_64/Packages/iptables-1.4.21-24.el7.x86_64.rpm 
+  sudo yum install docker
+  sudo yum install  -y kubelet kubeadm kubectl
+  sudo service docker start
+  # edit /etc/hosts
+  sudo sysctl enable kubelet.service && sudo sysctl enable docker.service 
+
+
+#Install ClickHouse server on all machines of the cluster
+#Set up cluster configs in configuration file
+  https://clickhouse.yandex/docs/en/table_engines/distributed/
+
+To provide for resilience in production environment we recommend that each shard should contain 2-3 replicas distributed between multiple data-centers. Note that ClickHouse supports unlimited number of replicas.
+
+Config for cluster of one shard containing three replicas
+
+ZooKeeper is not a requirement — in some simple cases you can duplicate the data by writing it into all the replicas from your application code. This approach is not recommended — in this case ClickHouse is not able to guarantee data consistency on all replicas. This remains the responsibility of your application.
+
+#Create local tables on each instance
+#Create a Distributed table
+
+
+  #RHEL
+   sudo yum install -y yum-utils
+   sudo yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+   sudo yum makecache fast
+   curl -kO https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm 
+   sudo yum install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
+   sudo yum install -y pigz
+   sudo curl -kO http://mirror.centos.org/centos/7/extras/x86_64/Packages/container-selinux-2.55-1.el7.noarch.rpm
+   sudo yum install -y ./container-selinux-2.55-1.el7.noarch.rpm
+   sudo yum install -y docker-ce
+   sudo service docker start
+  
+fi
+ 
+}
+
+cloudformation_example() {
+ #create_simple_ec2_SSH_HTTP_security_group $ec2_instance_simple_ssh_security_group_name $ingress_network_cidr_block
+ #create_key_pair $ec2_access_key_name $ec2_access_key_file
+ # Need to manually trim the key file here
+if [   ]; then
+ aws cloudformation create-stack --template-body file://cloudformation/single_instance-003.yaml \
+     --stack-name cf-stack-test-004 \
+     --parameters ParameterKey=KeyName,ParameterValue=$ec2_access_key_name \
+                  ParameterKey=InstanceType,ParameterValue=t2.micro
+fi
+ #connect `get_instance_public_ip_address ec_instance_001` $ec2_access_key_file
+ aws cloudformation delete-stack --stack-name cf-stack-test-004
+ echo ""
+
+}
+
+if check_prerequisites; then 
+ #setup_simple_kubernetes_cluster
+ #setup_docker_cluster
+ cleanup
+ #cloudformation_example
+fi
+
+
+
