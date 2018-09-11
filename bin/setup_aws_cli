@@ -1,0 +1,28 @@
+#!/bin/sh
+
+#
+#  This will set up the AWS CLI on the local node, using the same directory structure as the aws_tools GIT repo.  
+#
+#
+
+# Note that we just check the system Python release here, there is no localenv type routine to install
+check_python_release() {
+   python_version_label=`python --version 2>&1`
+   python_version=`echo $python_version_label | awk '{print $2}'`
+   if [[ ! "$python_version" > "2.5" ]]; then
+     echo -e "\n\n Installation failed, the default Python version is $python_version (2.5 required)\n\n"
+     exit 1
+   fi
+}
+
+install_aws_cli() {
+  sudo pip install awscli --upgrade --user
+}
+
+check_for_existing_aws_cli() {
+  echo .
+}
+
+check_python_release
+check_for_existing_aws_cli
+install_aws_cli
