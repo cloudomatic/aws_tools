@@ -1,0 +1,73 @@
+pip install awscli --user
+
+Add ~/Library/Python/2.7/bin/aws to path
+
+Create a user vi the administrative console in the "admin" group
+
+Run aws configure (us-west-2) Ouput format=json
+
+Look at the regions:
+     aws ec2 describe-regions --output table
+
+Create a new security group: 
+
+   aws ec2 create-security-group --group-name sg_ec2_ssh --description "Ability to SSH to EC2 instances and run commands"
+
+   aws ec2 authorize-security-group-ingress --group-name sg_ec2_ssh --protocol tcp --port 22 --cidr 0.0.0.0/0
+
+   aws ec2 describe-security-groups 
+
+Create an SSH identity to use to connect to EC2 instances
+
+  aws ec2 create-key-pair --key-name key_ec2_ssh --output text > key_ec2_ssh.pem
+  (chmod the file)
+
+Discuss using --query to grab just certain bits out of JSON response:
+
+  aws ec2 describe-security-groups --query SecurityGroups[0].GroupId
+
+What images are available?
+
+  aws ec2 describe-images --owners self amazon
+
+Create an instance
+
+  aws ec2 run-instances --image-id ami-6e1a0117 --security-group-ids sg-083ffea34b4e9eaaa  --count 1 --instance-type t1.micro --key-name key_ec2_ssh --query 'Instances[0].InstanceId' 
+
+
+Can you guess the name of the command to show instances?
+
+  aws ec2 describe-instances
+
+  aws ec2 describe-instances --query  Reservations[0].Instances[0].InstanceId
+
+What's the IP?
+
+  aws ec2 describe-instances --instance-ids "i-09a3b5a9e34e63175" --query Reservations[0].Instances[0].PublicIpAddress 
+
+Let's SSH in
+
+  ssh -i ./key_ec2_ssh.pem "ubuntu@54.202.255.191"
+
+  aws ec2 terminate-instances --instance-ids "i-056361a8285ef7d66"
+
+Copy up Tomcat
+
+ scp -i ./key_ec2_ssh.pem apache-tomcat-8.5.29.zip "ubuntu@54.202.255.191:/var/tmp/apache-tomcat-8.5.29.zip"
+ 
+Unzip
+
+   
+   ssh -i ./key_ec2_ssh.pem "ubuntu@54.202.255.191" "sudo mkdir -p /prototype/traderjoe && sudo chown -R ubuntu /prototype/traderjoe"
+   ssh -i ./key_ec2_ssh.pem "ubuntu@54.202.255.191" "sudo apt-get install unzip"
+   ssh -i ./key_ec2_ssh.pem "ubuntu@54.202.255.191" "cd /prototype/traderjoe && unzip /var/tmp/apache-tomcat-8.5.29.zip"
+   ssh -i ./key_ec2_ssh.pem "ubuntu@54.202.255.191" "sudo apt-get install openjdk-7-jre"
+   ssh -i ./key_ec2_ssh.pem "ubuntu@54.202.255.191" "cd /prototype/traderjoe/apa*/bin/ &&  chmod -R ugo+rx /prototype/traderjoe && ./startup.sh"
+   
+Try and access
+
+  Add the security group
+
+        aws ec2 authorize-security-group-ingress --group-name sg_ec2_ssh --protocol tcp --port 8080 --cidr 0.0.0.0/0
+
+

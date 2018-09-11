@@ -1,0 +1,4 @@
+export PATH=$PATH:/Users/spauldingx2//Library/Python/2.7/bin
+alias aws_all='aws ec2 describe-instances --query "Reservations[*].Instances[*].[State.Name,ImageId,KeyName,PublicIpAddress,InstanceId,Tags[*]]" '
+
+

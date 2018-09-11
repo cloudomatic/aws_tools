@@ -1,0 +1,29 @@
+
+
+apt-get install -y docker.io kubelet kubeadm kubectl
+
+kubeadm init --apiserver-advertise-address $MASTER_IP
+
+#Master
+kubeadm join --token <token> 138.197.186.42:6443 --discovery-token-ca-cert-hash sha256:<hashed_token>
+
+$ cp /etc/kubernetes/admin.conf $HOME/
+$ chown $(id -u):$(id -g) $HOME/admin.conf
+$ export KUBECONFIG=$HOME/admin.conf
+
+kubectl --kubeconfig ./admin.conf get nodes
+
+$ sysctl net.bridge.bridge-nf-call-iptables=1
+$ export kubever=$(kubectl version | base64 | tr -d '\n')
+$ kubectl apply -f "https://cloud.weave.works/k8s/net?k8s-version=$kubever"
+
+# Worker
+apt-get install -y kubelet kubeadm kubectl docker-io
+
+kubeadm join --token <token> <master_ip>:6443 --discovery-token-ca-cert-hash sha256:<hashed_token>
+
+
+
+
+
+

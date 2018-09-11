@@ -1,0 +1,117 @@
+##
+## WARNINGS: Key is created in a bad state, needs to be formatted
+##           ssh from mac needs host key suppression
+##           The only real way to make sure there's one and only one instance is to loop through all instances matching the filter and terminate
+
+aws=/Users/spauldingx2/Library/Python/2.7/bin/aws 
+ami_id=ami-6e1a0117
+access_network=198.133.167.0/24
+
+
+cleanup_all() {
+  echo ""
+  echo "Deleting instance"
+  vm_instance_id=`$aws ec2 describe-instances --filters "Name=tag-value,Values=ssh_gateway" --query Reservations[0].Instances[0].InstanceId | sed 's/\"//g'`
+  if [ x$vm_instance_id == xnull ]; then
+    echo "The ssh_gateway was not found"
+  else
+    $aws ec2 terminate-instances --instance-ids $vm_instance_id
+  fi
+  echo "Deleting key"
+  aws ec2 delete-key-pair --key-name key_ec2_ssh_guac
+  aws ec2 delete-security-group --group-name sg_ec2_ssh
+
+}
+
+check_cleanup() {
+  $aws ec2 describe-instances --query Reservations[*].Instances[*].State.Name
+  $aws ec2 describe-security-groups 
+  $aws ec2 describe-key-pairs
+}
+
+create_vm() {
+  echo "Checking for security group"
+  security_group_name=`$aws ec2 describe-security-groups --group-names sg_ec2_ssh --query SecurityGroups[0].GroupName 2>/dev/null | sed 's/\"//g'` 
+  if [ x$security_group_name != "xsg_ec2_ssh" ]; then
+    # Need to create the security group
+    echo "Creating security group...."
+    $aws ec2 create-security-group --group-name sg_ec2_ssh --description "Ability to SSH to EC2 instances and run commands"
+    $aws ec2 authorize-security-group-ingress --group-name sg_ec2_ssh --protocol tcp --port 22 --cidr $access_network
+    export security_group_name=`$aws ec2 describe-security-groups --group-names sg_ec2_ssh --query SecurityGroups[0].GroupName 2>/dev/null | sed 's/\"//g'`
+    if [ x$security_group_name != "xsg_ec2_ssh" ]; then
+      echo "Fatal error, could not create security group (security_group_name from create command came back as $security_group_name)"
+      exit 1
+    fi
+  fi
+  export security_group_id=`aws ec2 describe-security-groups --group-names sg_ec2_ssh --query SecurityGroups[0].GroupId | sed 's/\"//g'`
+  
+  echo "Checking for SSH key"
+  key_name=`aws ec2 describe-key-pairs --key-name key_ec2_ssh_guac --query KeyPairs[0].KeyName 2>/dev/null | sed 's/\"//g' `
+  if [ x$key_name != xkey_ec2_ssh_guac ]; then
+    echo "Creating SSH key"
+    aws ec2 create-key-pair --key-name key_ec2_ssh_guac --output text > key_ec2_ssh_guac.pem
+    export key_name=`$aws ec2 describe-key-pairs --key-name key_ec2_ssh_guac --query KeyPairs[0].KeyName | sed 's/\"//g'`
+    chmod go-rwx key_ec2_ssh_guac.pem
+    if [ x$key_name != xkey_ec2_ssh_guac ]; then
+      echo "Fatal error, could not create key_ec2_ssh_guac (key_name from create command came back as $key_name)"
+      exit 2
+    fi
+  fi
+
+  echo "Checking for the VM"
+  vm_instance_id=`$aws ec2 describe-instances --filters "Name=tag-value,Values=ssh_gateway" --query Reservations[0].Instances[0].InstanceId | sed 's/\"//g'`
+
+  echo "Creating the VM"
+  $aws ec2 run-instances --image-id $ami_id --security-group-ids $security_group_id  --count 1 --instance-type t1.micro --key-name key_ec2_ssh_guac --tag-specifications 'ResourceType=instance,Tags=[{Key=name,Value=ssh_gateway}]'
+  sleep 4
+  vm_instance_id=`$aws ec2 describe-instances --filters "Name=tag-value,Values=ssh_gateway" --query Reservations[0].Instances[0].InstanceId | sed 's/\"//g'`
+  if [ x$vm_instance_id=xnull ]; then
+      echo "Fatal error, could not create VM (instance_id came back as $instance_id)"
+      exit 3
+  fi
+
+  exit 0
+  if [ x$vm_instance_id != xnull ]; then
+    # Make sure it's not an instance we just terminated
+    is_terminated=`$aws ec2 describe-instances --filters "Name=tag-value,Values=ssh_gateway" --query Reservations[0].Instances[0].State.Name | sed 's/\"//g'`
+    if [ x$is_terminated == xterminated ]; then
+      echo "The ssh_gateway was found, but in a terminated state"
+    else 
+      echo "The ssh_gateway was not found"
+    fi
+   echo "Creating the ssh_gateway VM instance"
+   #launch_instance
+   vm_instance_id=`$aws ec2 describe-instances --filters "Name=tag-value,Values=ssh_gateway" --query Reservations[0].Instances[0].InstanceId | sed 's/\"//g'`
+   if [ x$vm_instance_id=xnull ]; then
+      echo "Fatal error, could not create VM (instance_id came back as $instance_id)"
+      exit 3
+   fi
+  fi
+ 
+  echo "Retrieving IP address of ssh_gateway"
+  ip_address=`$aws ec2 describe-instances --filters "Name=tag-value,Values=ssh_gateway" --query Reservations[0].Instances[0].PublicIpAddress | sed 's/\"//g'`
+  echo "The IP address of the ssh_gateway is $ip_address"
+  #ssh -i key_ec2_ssh_guac.pem ubuntu@$ip_address ls /var/log
+}
+
+configure_vm() {
+  # Make sure we can get an IP and the host is accessible via SSH
+  ip_address=`$aws ec2 describe-instances --filters "Name=tag-value,Values=ssh_gateway" --query Reservations[0].Instances[0].PublicIpAddress | sed 's/\"//g'`
+  echo "The IP address of the ssh_gateway is $ip_address"
+  ssh -i key_ec2_ssh_guac.pem ubuntu@$ip_address 
+
+#sudo apt-get update
+#sudo apt install -y docker.io
+sudo chown ubuntu /var/run/docker.sock
+
+#docker run --name some-guacd -d guacamole/guacd
+#docker run --name some-guacd -d guacamole/guacd
+#docker run --name some-guacamole --link some-guacd:guacd -d -p 8080:8080 guacamole/guacamole 
+docker run --rm guacamole/guacamole /opt/guacamole/bin/initdb.sh --mysql > /tmp/initdb.sql
+
+}
+
+#create_vm
+#configure_vm
+cleanup_all
+check_cleanup
