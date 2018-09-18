@@ -6,7 +6,7 @@
   .olap_label {
       color: black;
       font-family: "Archivo Black", sans-serif;
-      font-size: 36px;
+      font-size: 24px;
       font-wight: bold;
     }
 
@@ -24,7 +24,7 @@
   }
 
   .ninety_degree_arrows {
-    width: 100px;
+    width: 50px;
     height: auto;
   }
 
@@ -237,16 +237,18 @@ By default, Amazon EMR configures the Presto web interface on the Presto coordin
 
 <table border=0 cellpadding=0 cellspacing=0>
   <tr>
-    <td valign=middle align=right>
-       <img src="https://botw-pd.s3.amazonaws.com/styles/logo-thumbnail/s3/102017/logo_0.png?17TK91b1B6OvV2MFrCLfukw1c8oEaNr6&itok=vsanFiUj" style="width: 100px; height: auto;" alt="aws data solutions">
-       <!-- img src="https://static.thenounproject.com/png/36146-200.png" style="width: 100px; height: auto;" alt="data"-->
+    <td valign=middle>
+       <img src="header.png" alt="data">
     </td>
     <td>
       <table border=0>
         <tr>
+<!--
           <td><img src="90_degree_arrow_upper_right.png" class="ninety_degree_arrows"></td>
           <td class="olap_label">OLAP</td> 
+
           <td class="td_progress_arrow"><img src="progress_arrow.png" class="img_progress_arrow"></td>
+-->
           <td><table border=0><tr>
             <td class="td_product_panel" onClick="showProductDetails('redshift');">
              <table cellpadding=0 cellspacing=0>
@@ -262,7 +264,7 @@ By default, Amazon EMR configures the Presto web interface on the Presto coordin
                  <td>
                    <a class="a_product_details">
                     - Runs on Postgres<br>
-                    - Traditonal ANSI SQL data warehouse solution<br>
+                    - Traditonal ANSI SQL data warehouse<br>
                     - SQL query tool required (ODBC, JDBC)<br>
                     - Supports an Athena-like S3 option (Spectrum)<br>
                     - Instance pricing, 3 year leases recommended<br>
@@ -316,8 +318,9 @@ By default, Amazon EMR configures the Presto web interface on the Presto coordin
                     - Uses HiveDDL and ANSI SQL<br>
                     - Pricing is $5/TB scanned<br>
                     - Limited AZs as of 2018<br>
-                    - Useful for ad-hoc queries, result sets are written to S3<br>
-                    - Supports ODBC, JDBC, and a REST API for access<br>
+                    - Useful for ad-hoc queries<br>
+                    - Results are written to S3<br>
+                    - Access via ODBC/JDBC/REST<br>
                    </a>
                 </td>
               </tr>
@@ -329,9 +332,12 @@ By default, Amazon EMR configures the Presto web interface on the Presto coordin
         </tr>
         <tr><td height=25><!-- spacer --></td></tr>
         <tr>
+<!--
+
           <td><img src="90_degree_arrow_lower_right.png" class="ninety_degree_arrows"></td>
           <td class="olap_label">OLTP</td>
           <td class="td_progress_arrow"><img src="progress_arrow.png" class="img_progress_arrow"></td>
+-->
           <td><table border=0><tr> <!-- begin all OLTP products -->
           <td class="td_product_panel"  onClick="showProductDetails('rds');">
              <table cellpadding=0 cellspacing=0>
@@ -369,7 +375,8 @@ By default, Amazon EMR configures the Presto web interface on the Presto coordin
                  <td> <!-- spacer --> </td>
                  <td>
                    <a class="a_product_details">
-                    - High availability RDBS if you can leverage Postgres or MySQL<br>
+                    - High availability RDBS<br>
+                    - Limited to Postgres/MySQL<br>
                     - Automatic replication across 3 AZs<br>
                    </a>
                 </td>
@@ -412,8 +419,10 @@ By default, Amazon EMR configures the Presto web interface on the Presto coordin
                  <td> <!-- spacer --> </td>
                  <td>
                    <a class="a_product_details">
-                    - Graph database (SPARQL)<br>
-                    - Probably uses Apache Jena (RDF4J)<br>
+                    - Graph database<br>
+                    - Queries in SPARQL and Gremlin<br>
+                    - Proprietary underlying engine<br>
+                    - On-demand instance pricing<br>
                    </a>
                 </td>
               </tr>
