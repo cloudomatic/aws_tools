@@ -1,0 +1,72 @@
+<html>
+</html>
+<!--
+
+Interesting general stuff here: https://docs.aws.amazon.com/general/latest/gr/rande.html#cfn_region
+
+RDS
+
+  RDS exists in the free tier, Aurora does not (no micro instances).
+
+  To deliver a managed service experience, Amazon RDS doesn't provide shell access to DB instances, and it restricts access to certain system procedures and tables that require advanced privileges.
+
+  The basic building block of Amazon RDS is the DB instance. 
+
+  A DB instance runs a DB engine (MySQL/PostgresMariaDB/Oracle/SQLServer) can contain multiple user-created databases, and you can access it by using the same tools and applications that you use with a stand-alone database instance. 
+ 
+  DB instance storage comes in three types: Magnetic, General Purpose (SSD), and Provisioned IOPS (PIOPS). 
+
+  You can run your DB instance in several Availability Zones, an option called a Multi-AZ deployment.  Amazon automatically provisions and maintains a secondary standby DB instance in a different Availability Zone. Your primary DB instance is synchronously replicated across Availability Zones to the secondary instance to provide data redundancy, failover support, eliminate I/O freezes, and minimize latency spikes during system backups. 
+
+  When you use Amazon RDS, you can choose to use on-demand DB instances or reserved DB instances.
+
+  On Amazon RDS, a Multi-AZ deployment creates a primary DB instance and a secondary standby DB instance in another Availability Zone for failover support (one master one standby, but not a read replica)
+
+  If you have a DB instance in a Single-AZ deployment and you modify it to be a Multi-AZ deployment (for engines other than SQL Server or Amazon Aurora), Amazon RDS takes several steps. First, Amazon RDS takes a snapshot of the primary DB instance from your deployment and then restores the snapshot into another Availability Zone. Amazon RDS then sets up synchronous replication between your primary DB instance and the new instance. This action avoids downtime when you convert from Single-AZ to Multi-AZ, but you can experience a significant performance impact when first converting to Multi-AZ. This impact is more noticeable for large and write-intensive DB instances.
+
+  In the event of a planned or unplanned outage of your DB instance, Amazon RDS automatically switches to a standby replica in another Availability Zone if you have enabled Multi-AZ. 
+
+  DB event subscriptions can be setup to notify you via email or SMS that a failover has been initiated. 
+
+  Trade offs between multi-AZ and read replicas:  https://aws.amazon.com/rds/details/multi-az/
+
+  Enable automatic backups and set the backup window to occur during the daily low in write IOPS.
+  
+  If your client application is caching the Domain Name Service (DNS) data of your DB instances, set a time-to-live (TTL) value of less than 30 seconds. Because the underlying IP address of a DB instance can change after a failover, caching the DNS data for an extended time can lead to connection failures if your application tries to connect to an IP address that no longer is in service.
+
+  An Amazon RDS performance best practice is to allocate enough RAM so that your working set resides almost completely in memory. To tell if your working set is almost all in memory, check the ReadIOPS metric (using Amazon CloudWatch) while the DB instance is under load. The value of ReadIOPS should be small and stable. If scaling up the DB instance class—to a class with more RAM—results in a dramatic drop in ReadIOPS, your working set was not almost completely in memory. Continue to scale up until ReadIOPS no longer drops dramatically after a scaling operation, or ReadIOPS is reduced to a very small amount.
+
+  > 
+  
+
+Aurora
+
+  Amazon Aurora replicates each chunk of my database volume six ways across three Availability Zones.
+
+  Performance optimized "production" databases
+
+  Automatic backups to S3
+
+  MySQL is limited to the InnoDB storage engine (no MyISAM).
+
+Cloudformation
+
+   Stack, template, 
+   Change set - adds transactional capability to stacks.
+   Cloudformation Designer looks interesting
+   Deletion policies retain resources when delete stack is called
+   Cloud-Init vs Ansible trade-offs
+     Service limits dictate how useful cloud-init is for CM
+     Vendor lock-in to AWS with the cloud-init approach
+   Beware of endpoint policies in a VPC that affect responses going to S3 buckets
+
+   > https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/updating.stacks.walkthrough.html
+
+Regional Endpoints
+
+IAM 
+
+  Users belong to groups
+  Groups have policies attached
+  In an IAM policy, you can optionally specify conditions that control when a policy is in effect. For example, you can define a policy that allows IAM users to create a stack only when they specify a certain template URL.
+-->
