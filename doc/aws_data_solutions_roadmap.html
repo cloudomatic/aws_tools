@@ -183,6 +183,19 @@ By default, Amazon EMR configures the Presto web interface on the Presto coordin
          <blockquote>
            - Does not support multi-user authentication, everything is accessed via an SSH tunnel to the master node.
            <hr>
+           HBase - Introduced in 2006, column-oriented key-value data store written in Java (and accessed via a Java API), runs on HDFS.  SQL overlay provided by Apache Phoenix.
+           <hr>
+           Hive - Introduced in 2010 to provide SQL access HiveQL/HiveDDL access to HDFS data via the Hive metastore.  Supports  UDFs, 
+
+           <hr>
+           Misc products:<br>
+             <blockquote>
+               YARN: Hive cluster coordinator<br>
+               Pig: Scripting language for Hadoop jobs, supports UDFs in Java, Python, Ruby, Groovy<br>
+               Sqoop: CLI for ETL work in Hadoop<br>
+               Impala: 
+             </blockquote>
+           <hr>
            Sample launch command leveraging spot instances:<br>
            <pre>
    $ aws emr create-cluster \
