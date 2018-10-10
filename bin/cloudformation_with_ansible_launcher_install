@@ -21,7 +21,7 @@ aws_ec2_access_keyfile_name=./artofwar11.pem
 aws_cloudformation_stack_name=cf-artofwar-stack11
 ec2_ami_id=ami-6b8cef13
 ec2_instance_ssh_username=ec2-user
-ec2_configuration_script_url="https://raw.githubusercontent.com/cloudomatic/aws_tools/master/bin/configure_ec2_instance"
+ec2_configuration_script_url="https://raw.githubusercontent.com/cloudomatic/aws_tools/master/bin/configure_ec2_instance_with_ansible"
 
 
 #
@@ -94,6 +94,7 @@ connect() {
     echo -e "\n\n [`basename "$0"`]: connect():  Error: Could not connect ($ip_address). \n\n"
     exit  3
   else
+    echo -e "\n [`basename "$0"`]: connect(): Connecting to $ip_address\n"
     ssh -i $aws_ec2_access_keyfile_name ec2-user@$ip_address
   fi
 }

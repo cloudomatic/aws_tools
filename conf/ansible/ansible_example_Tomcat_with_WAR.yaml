@@ -8,7 +8,6 @@
     tomcat_version_label: apache-tomcat-8.5.34
     tomcat_download_url: http://apache.mirrors.pair.com/tomcat/tomcat-8/v8.5.34/bin/apache-tomcat-8.5.34.zip
     url_to_git_repository_for_maven_build_artifact: https://github.com/cloudomatic/ArtOfWar
-    git_repo_target_directory: /home/ec2-user/
     post_maven_build_artifact: /home/ec2-user/ArtOfWar/target/debug.war
     maven_build_directory: /home/ec2-user/ArtOfWar
     tomcat_deployed_war_file_name: ROOT.war
@@ -83,6 +82,7 @@
       mode: ugo+rx
       owner: ec2-user
       group: ec2-user
+      exclude: "*webapps/ROOT*"
 
   - name: Link Tomcat version as default
     become: true
@@ -100,7 +100,7 @@
   - name: Retrieve Maven project from Git
     git:
       repo: "{{ url_to_git_repository_for_maven_build_artifact }}"
-      dest: "{{ git_repo_target_directory }}"
+      dest: "{{ maven_build_directory }}"
 
   - name: Build WAR
     shell: mvn -X clean install > maven_install.out 2> maven_install.err
@@ -111,11 +111,15 @@
       JAVA_HOME: /usr/lib/jvm/java-1.8.0
       PATH: /opt/maven/bin:{{ ansible_env.PATH }}
 
-  - name: Copy WAR to Tomcat
-    copy: 
+  - name: Update Tomcat war
+    file: 
       src:  "{{ post_maven_build_artifact }}"
-      dest: "/opt/apache-tomcat/webapps/{{  tomcat_deployed_war_file_name }}"
-      mode: ugo+rx
+      dest: /opt/apache-tomcat/webapps/ROOT.war
+      state: link
+#    copy: 
+#      src:  "{{ post_maven_build_artifact }}"
+#      dest: "/opt/apache-tomcat/webapps/{{  tomcat_deployed_war_file_name }}"
+#      mode: ugo+rx
 
   - name: Start Tomcat
     command: nohup /opt/apache-tomcat/bin/startup.sh >> /opt/apache-tomcat/logs/startup.log &
