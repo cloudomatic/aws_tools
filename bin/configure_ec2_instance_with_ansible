@@ -1,0 +1,32 @@
+#!/bin/bash -xe
+
+#
+# Routine to configure an EC2 instance (AWS Linux) with Ansible and launch a playbook
+#
+
+playbook_url="https://raw.githubusercontent.com/cloudomatic/aws_tools/master/conf/ansible/ansible_example_Tomcat_with_WAR.yaml"
+LOG=/var/log/configure_ec2_instance_with_ansible.log
+ami_username=ec2-user
+
+# Make sure the log is writable by $ami_username
+sudo touch $LOG 
+sudo chown $ami_username $LOG
+sudo chmod u+w $LOG 
+
+echo " [`basename "$0"`]: `date`: Installing Ansible" | tee -a $LOG
+sudo pip install ansible | tee -a $LOG
+sudo yum install -y git | tee -a $LOG
+
+# We can clone the Git repository and leverage a modularized playbook which uses multiple files
+#sudo -u $ami_username /usr/bin/git clone https://github.com/cloudomatic/ArtOfWar /home/$ami_username/ArtOfWar | tee -a $LOG
+#sudo -u $ami_username /usr/local/bin/ansible-playbook /home/$ami_username/ArtOfWar/install/ansible/install.yaml -vvv >> $LOG 2>> $LOG
+
+# ... or retrieve a single file example Playbook directly from a (e.g. Git) server
+echo " [`basename "$0"`]: Retrieving playbook at $playbook_url (current directory: `pwd`)" | tee -a $LOG
+sudo -u $ami_username /usr/bin/curl -kvO $playbook_url | tee -a $LOG
+playbook_name=`basename $playbook_url`
+echo " [`basename "$0"`]: Executing playbook_name=[$playbook_name]" | tee -a $LOG
+sudo -u $ami_username /usr/local/bin/ansible-playbook $playbook_name -vvv >> $LOG 2>> $LOG
+
+
+

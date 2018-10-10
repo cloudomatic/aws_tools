@@ -1,0 +1,122 @@
+
+
+- name: Install Apache Tomcat with the target WAR
+  hosts: localhost
+  vars:
+    maven_version_label: apache-maven-3.5.4
+    maven_download_url: http://us.mirrors.quenda.co/apache/maven/maven-3/3.5.4/binaries/apache-maven-3.5.4-bin.zip
+    tomcat_version_label: apache-tomcat-8.5.34
+    tomcat_download_url: http://apache.mirrors.pair.com/tomcat/tomcat-8/v8.5.34/bin/apache-tomcat-8.5.34.zip
+    url_to_git_repository_for_maven_build_artifact: https://github.com/cloudomatic/ArtOfWar
+    git_repo_target_directory: /home/ec2-user/
+    post_maven_build_artifact: /home/ec2-user/ArtOfWar/target/debug.war
+    maven_build_directory: /home/ec2-user/ArtOfWar
+    tomcat_deployed_war_file_name: ROOT.war
+
+  tasks:
+
+  - name: Install OS packages
+    yum: 
+      name: "{{ item }}"
+      state: present
+    become: true
+    with_items:
+     - git
+     - unzip
+     - java-1.8.0-devel
+
+  # The current AWS package for Maven seems to revert back to JDK 1.7 so a manual download is required
+  - name: Download Maven
+    get_url:
+      url: "{{ maven_download_url }}"
+      dest: "/var/tmp/{{ maven_version_label }}.zip"
+
+  - name: Download Apache Tomcat
+    get_url:
+      url: "{{ tomcat_download_url }}"
+      dest: "/var/tmp/{{ tomcat_version_label }}.zip"
+
+# Removing this to make the install less dependent on default OS settings
+#  - name: Make Java 1.8 the default JDK
+#    become: true
+#    alternatives: 
+#      link: /usr/bin/java
+#      name: java
+#      path: /usr/lib/jvm/java-1.8.0/bin/java
+#
+#  - name: Make Java 1.8 the default compiler
+#    become: true
+#    alternatives:
+#      link: /usr/bin/javac
+#      name: javac
+#      path: /usr/lib/jvm/java-1.8.0/bin/javac
+
+  - name: Unpack Maven
+    become: true
+    unarchive:
+      src: "/var/tmp/{{ maven_version_label }}.zip"
+      dest: /opt
+      mode: ugo+rx
+      owner: ec2-user
+      group: ec2-user
+      creates: "/opt/{{ maven_version_label }}.zip"
+
+  - name: Link Maven version as default
+    become: true
+    file:
+      src: "/opt/{{ maven_version_label }}"
+      dest: /opt/maven
+      state: link
+
+  - name: Set Maven path
+    become: true
+    copy:
+      dest: /etc/profile.d/maven.sh
+      content: 'PATH=$PATH:/opt/maven/bin'
+
+  - name: Unpack Tomcat
+    become: true
+    unarchive:
+      src: "/var/tmp/{{ tomcat_version_label }}.zip"
+      creates: "/opt/{{ tomcat_version_label }}.zip"
+      dest: /opt
+      mode: ugo+rx
+      owner: ec2-user
+      group: ec2-user
+
+  - name: Link Tomcat version as default
+    become: true
+    file:
+      src: "/opt/{{ tomcat_version_label }}"
+      dest: /opt/apache-tomcat
+      state: link
+
+  - name: Configure Apache Tomcat
+    copy:
+      dest: /opt/apache-tomcat/bin/setup.sh
+      content: 'JAVA_HOME=/usr/lib/jvm/java-1.8.0'
+      mode: u+rx
+
+  - name: Retrieve Maven project from Git
+    git:
+      repo: "{{ url_to_git_repository_for_maven_build_artifact }}"
+      dest: "{{ git_repo_target_directory }}"
+
+  - name: Build WAR
+    shell: mvn -X clean install > maven_install.out 2> maven_install.err
+    args:
+      chdir: "{{ maven_build_directory }}"
+      creates: "{{ post_maven_build_artifact }}"
+    environment:
+      JAVA_HOME: /usr/lib/jvm/java-1.8.0
+      PATH: /opt/maven/bin:{{ ansible_env.PATH }}
+
+  - name: Copy WAR to Tomcat
+    copy: 
+      src:  "{{ post_maven_build_artifact }}"
+      dest: "/opt/apache-tomcat/webapps/{{  tomcat_deployed_war_file_name }}"
+      mode: ugo+rx
+
+  - name: Start Tomcat
+    command: nohup /opt/apache-tomcat/bin/startup.sh >> /opt/apache-tomcat/logs/startup.log &
+    
