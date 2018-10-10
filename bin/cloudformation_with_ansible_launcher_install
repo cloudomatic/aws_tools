@@ -12,16 +12,21 @@
 export PATH=$PATH:~/.local/bin
 
 ###### Change these if needed
-ec2_instance_name=artofwar11
+# The Cloudformation template to execute
 cloudformation_template=../conf/cloudformation/single_ec2_instance_with_ansible_launcher.yaml
+
+# The ansible bootstrap routine.  This will be passed to the instance in the UserData section of the Cloudformation template
+ec2_configuration_script_url="https://raw.githubusercontent.com/cloudomatic/aws_tools/master/bin/configure_ec2_instance_with_ansible"
+
+# EC2 details
+ec2_instance_name=artofwar12
 # If you don't want to create an access key, set "create" to false here and specify the access key nam
 create_new_ec2_access_key=true
-aws_ec2_access_key_name=ec2_key_artofwar11
-aws_ec2_access_keyfile_name=./artofwar11.pem
-aws_cloudformation_stack_name=cf-artofwar-stack11
+aws_ec2_access_key_name=ec2_key_artofwar12
+aws_ec2_access_keyfile_name=./artofwar12.pem
+aws_cloudformation_stack_name=cf-artofwar-stack12
 ec2_ami_id=ami-6b8cef13
 ec2_instance_ssh_username=ec2-user
-ec2_configuration_script_url="https://raw.githubusercontent.com/cloudomatic/aws_tools/master/bin/configure_ec2_instance_with_ansible"
 
 
 #
