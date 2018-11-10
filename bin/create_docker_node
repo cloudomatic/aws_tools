@@ -11,7 +11,7 @@ export PATH=$PATH:~/.local/bin
 # EC2 details
 ec2_instance_name=dockerhost12
 # If you don't want to create an access key, set "create" to false here and specify the access key nam
-create_new_ec2_access_key=false
+create_new_ec2_access_key=true
 aws_ec2_access_key_name=ec2_key_dockerhost12
 aws_ec2_access_keyfile_name=./dockerhost12.pem
 aws_cloudformation_stack_name=cf-dockerhost-stack12
@@ -176,7 +176,7 @@ Resources:
           #curl -O $configuration_script_url
           #chmod u+rx $configuration_script
           #./$configuration_script
-          sudo yum install -y docker
+          sudo yum install -y docker git
           sleep 5
           sudo service docker start
           sleep 10

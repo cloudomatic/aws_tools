@@ -1,0 +1,114 @@
+#!/bin/sh
+
+#
+# In this exercise, we start with an AWS EC2 node containing nothing but the Docker engine and GIT, and launch Jenkins in the default Cloudbees Blue Ocean container, 
+# manually creating a Jenkins pipeline job, then feeding in the Jenkinsfile from the ArtOfWar project.  We expect to see ArtOfWar delivered daily running in a Docker container, with
+# a portal page detailing to the end user the build status, a link to the Jenkins Pipeline dashboard, and a link to the running application.
+#
+# The idea here is that the pipeline is created with no pre-existing software on the Docker host, i.e. Maven and Jenkins will both run in separate containers.  
+#
+# Next steps are to automate the BlueOcean setup (via the CLI and configuration-as-code plugins) so that we have a "one-click" creation of the entire Pipeline
+#
+
+
+###### Add the AWS CLI
+export PATH=$PATH:~/.local/bin
+
+# EC2 Details
+ec2_docker_host=dockerhost12
+ec2_access_key_file=./dockerhost12.pem
+
+#
+# Validates that the Python-based AWS CLI is available and that user credentials have been configured
+#
+validate_aws_cli() {
+  if [ `aws ec2 describe-regions | grep "us-east" | wc -l` -lt 2 ]; then
+    echo -e "\n\n [`basename "$0"`] validate_aws_cli(): Error: Could not validate the AWS CLI \n\n"
+    exit 1
+  else
+    return 0
+  fi
+}
+
+
+#
+# Retrieves the public IP address of an EC2 instance
+#
+get_ec2_instance_public_ip_address() {
+  instance_name=$1
+
+  if ! validate_aws_cli; then
+    echo -e "\n\n [`basename "$0"`]: get_ec2_instance_public_ip_address():  Error: Could not validate the AWS EC2 CLI.  Validate that the "aws" command is in the current PATH. \n\n"
+    exit 1
+  fi
+  ip_address=`aws ec2 describe-instances --filters "Name=tag-value,Values=$instance_name" --query Reservations[0].Instances[0].PublicIpAddress | sed 's/\"//g'`
+  if [ x$ip_address == xnull ] ||  [ x$ip_address == x ]; then
+    echo "ERROR: get_instance_public_ip_address(): Could not retrieve an ip address for instance: [$instance_name]"
+    exit 2
+  fi
+  echo $ip_address
+}
+
+
+#
+# Connect to the EC2 instance via SSH
+#
+connect() {
+  ip_address=`get_ec2_instance_public_ip_address $ec2_docker_host`
+  if [ `echo $ip_address | grep -i error | wc -c` -gt 2 ]; then
+    echo -e "\n\n [`basename "$0"`]: connect():  Error: Could not connect ($ip_address). \n\n"
+    exit  3
+  else
+    echo -e "\n [`basename "$0"`]: connect(): Connecting to $ip_address\n"
+    ssh -i $ec2_access_key_file ec2-user@$ip_address
+  fi
+}
+
+
+
+
+# Start of main program
+
+# Locate the Docker host address
+docker_host_address=$(get_ec2_instance_public_ip_address $ec2_docker_host)
+
+# Enable CLI access to any function
+if [ $# -gt 0 ]; then
+  $@
+  exit 1
+fi
+
+
+# Create a helper command to run Docker orchestration commands on this instance
+remote_run="ssh -i $ec2_access_key_file ec2-user@$docker_host_address"
+$remote_run \
+\
+            ls -l /tmp
+
+##### Start of demo #####
+
+## Create a pseudo-volume for persistent Jenkins data (This should not be necessary once complete automation is achieved)
+$remote_run \
+\
+   if [ ! -w /var/jenkins_home ]; then sudo mkdir /var/jenkins_home && sudo chown ec2-user /var/jenkins_home; fi
+
+## Launch a BlueOcean container
+$remote_run \
+\
+   docker run \
+  --rm \
+  -u root \
+  -p 8080:8080 \
+  -v jenkins-data:/var/jenkins_home \ 
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v "$HOME":/home \ 
+  jenkinsci/blueocean
+
+## Access the instance in the browser and unlock the console, install "typical" plugins, create the admin user, and a new Pipeline job called "ArtOfWarDailyDelivery"
+
+
+
+
+
+
+
