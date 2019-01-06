@@ -1,0 +1,354 @@
+#!/bin/sh
+
+#
+#  The purpose of this exercise is to set up a single-node Docker host using Cloudformation and the UserData method for EC2 instance configuration.  
+#  Note that the Cloudformation template is embedded inside this program.
+#
+
+this_program_name="single_ec2_node"
+
+### Project name - rotate this based on what you're doing at the moment
+project_name="docker1232"
+
+###### Add the AWS CLI
+export PATH=$PATH:~/.local/bin
+
+# EC2 details
+ec2_instance_name=$project_name
+# If you don't want to create an access key, set "create" to false here and specify the AWS access key name
+create_new_ec2_access_key=false
+import_new_ec2_access_key_from_file=true
+aws_ec2_access_key_name=ec2_key_$project_name
+aws_ec2_access_keyfile_name=./keys/$project_name.pem
+aws_cloudformation_stack_name=cf-stack-$project_name
+# This is vanilla AWS Linux for this region
+ec2_ami_id=ami-6b8cef13
+ec2_instance_ssh_username=ec2-user
+
+if [ `uname -a | grep Darwin | wc -c` -gt 0 ]; then
+  # We're on the Mac, and 'echo  $@' doesn't seem to work.  Email me if you
+  #   know a workaround for this
+  alias _echo="echo $@"
+else
+  alias _echo="echo -e  $@"
+fi
+
+
+#
+# Validates that the Python-based AWS CLI is available and that user credentials have been configured
+#
+validate_aws_cli() {
+  if [ `aws ec2 describe-regions | grep "us-east" | wc -l` -lt 2 ]; then
+    _echo  "\n\n [`basename "$0"`] validate_aws_cli(): Error: Could not validate the AWS CLI \n\n"
+    exit 1
+  fi
+}
+
+#
+# Import an existing private key file as a key pair.
+#
+import_ec2_access_key() {
+  if ! validate_aws_cli; then
+    _echo  "\n\n [`basename "$0"`] import_ec2_access_key(): Error: Could not validate the AWS EC2 CLI.  Validate that the "aws" command is in the current PATH. \n\n"
+    exit 1
+  fi
+  if [ -r $aws_ec2_access_keyfile_name ]; then
+    _echo  "\n\n [`basename "$0"`] import_ec2_access_key(): Using key $aws_ec2_access_keyfile_name \n"
+    aws ec2 import-key-pair  --key-name $aws_ec2_access_key_name --public-key-material "`ssh-keygen -y -f ./keys/docker1232.pem`"
+    aws ec2 describe-key-pairs --key-name $aws_ec2_access_key_name
+    return
+  fi
+}
+
+#
+#  Use this routine to create an EC2 access key.
+#
+create_ec2_access_key() {
+  if ! validate_aws_cli; then
+    _echo  "\n\n [`basename "$0"`] create_ec2_access_key(): Error: Could not validate the AWS EC2 CLI.  Validate that the 'aws' command is in the current PATH. \n\n"
+    exit 1
+  fi
+
+  if [ -r $aws_ec2_access_keyfile_name ]; then
+    _echo  "\n\n [`basename "$0"`] create_ec2_access_key(): EC2 access keyfile detected, skipping new key creation \n"
+    return
+  fi
+
+  _echo  "\n  [`basename "$0"`] create_ec2_access_key(): Creating the EC2 access key \n"
+  # Create the key in AWS
+  aws ec2 create-key-pair --key-name $aws_ec2_access_key_name --output text> $aws_ec2_access_keyfile_name.tmp
+
+  # For some reason these always need to be trimmed, or else SSH thinks it's an encrypted private key due to the extra characters
+  cat $aws_ec2_access_keyfile_name.tmp  | sed 's/-----BEGIN/\n-----BEGIN/g' | sed 's/END RSA PRIVATE KEY-----/END RSA PRIVATE KEY-----\n/g' | head -24 | tail -23 > $aws_ec2_access_keyfile_name
+  chmod go-rwx $aws_ec2_access_keyfile_name
+
+  # Validate
+  if [ ` ssh-keygen -f $aws_ec2_access_keyfile_name  -y | grep ssh-rsa | wc -l` -gt 0 ]; then
+    rm $aws_ec2_access_keyfile_name.tmp
+    _echo   "\n\n [`basename "$0"`] Success: Created key pair "$aws_ec2_access_key_name" ($aws_ec2_access_keyfile_name) \n\n"
+  else
+     _echo  "\n\n [`basename "$0"`] Error: The file <$aws_ec2_access_keyfile_name.tmp> failed validation \n\n"
+  fi 
+} 
+
+#
+# Retrieves the public IP address of an EC2 instance
+#
+get_ec2_instance_public_ip_address() {
+  instance_name=$1
+
+  if ! validate_aws_cli; then
+    _echo  "\n\n [`basename "$0"`]: get_ec2_instance_public_ip_address():  Error: Could not validate the AWS EC2 CLI.  Validate that the "aws" command is in the current PATH. \n\n"
+    exit 1
+  fi
+  ip_address=`aws ec2 describe-instances --filters "Name=tag-value,Values=$instance_name" --query Reservations[0].Instances[0].PublicIpAddress | sed 's/\"//g'`
+  if [ x$ip_address == xnull ] ||  [ x$ip_address == x ]; then
+    _echo "ERROR: get_instance_public_ip_address(): Could not retrieve an ip address for instance: [$instance_name]"
+    exit 2
+  fi
+  _echo $ip_address
+}
+
+#
+# Connect to the EC2 instance via SSH
+#
+connect() {
+  ip_address=`get_ec2_instance_public_ip_address $ec2_instance_name`
+  if [ `_echo $ip_address | grep -i error | wc -c` -gt 2 ]; then
+    _echo  "\n\n [`basename "$0"`]: connect():  Error: Could not connect ($ip_address). \n\n"
+    exit  3
+  else
+    _echo  "\n [`basename "$0"`]: connect(): Connecting to $ip_address\n"
+    ssh -i $aws_ec2_access_keyfile_name ec2-user@$ip_address
+  fi
+}
+
+#
+# Create an EC2 instance
+#
+create_ec2_instance() {
+  if ! validate_aws_cli; then
+    _echo  "\n\n [`basename "$0"`]: create_ec2_instance(): Error: Could not validate the AWS EC2 CLI.  Validate that the "aws" command is in the current PATH. \n\n"
+    exit 1
+  fi
+  # Create the cloudformation template
+  cloudformation_template=./~cf.tmp
+  cat << EOF > $cloudformation_template
+# http://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/sample-templates-services-us-west-2.html#w1ab2c21c45c15c15
+# Amazon EC2 instance in a security group Creates an Amazon EC2 instance in an Amazon EC2 security group.
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: '
+  Reference: https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-ec2-instance.html
+  '
+Parameters:
+  InstanceName:
+    Description: Name to use when tagging the "Name" attribute of the EC2 instance
+    Type: String
+    Default: Dockernode01
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instance
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: must be the name of an existing EC2 KeyPair.
+  InstanceType:
+    Description: The EC2 instance type to create
+    Type: String
+    Default: t2.micro
+  AMIId:
+    Description: The AMI to use
+    Type: String
+    Default: "ami-6b8cef13"
+  ConfigurationScript:
+    Description: The configuration routine (URL to a bash script) to execute for VM customization
+    Type: String
+    Default: ""
+  SSHLocation:
+    Description: The IP address range that can be used to SSH to the EC2 instances
+    Type: String
+    MinLength: '9'
+    MaxLength: '18'
+    Default: 0.0.0.0/0
+    AllowedPattern: "(\\\\d{1,3})\\\\.(\\\\d{1,3})\\\\.(\\\\d{1,3})\\\\.(\\\\d{1,3})/(\\\\d{1,2})"
+    ConstraintDescription: must be a valid IP CIDR range of the form x.x.x.x/x.
+Resources:
+  EC2Instance01:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType:
+        Ref: InstanceType
+      SecurityGroups:
+      - Ref: InstanceSecurityGroup
+      KeyName:
+        Ref: KeyName
+      ImageId:
+        Ref: AMIId
+      AvailabilityZone: "us-west-2b"
+      Tags:
+      - 
+        Key: Name
+        Value:
+          Ref: InstanceName
+      - 
+        Key: "Foo"
+        Value: "Bar"
+      UserData:
+        Fn::Base64: !Sub |     # No more Fn::Join needed
+          #!/bin/bash -xe
+          # Note to user that this will log to /var/log/cloud-init-output.log
+          echo "Executing UserData routine...."
+          echo "working directory: `pwd`"
+          echo "user: `whoami`"
+          #configuration_script_url=${ConfigurationScript}
+          #echo "url: $configuration_script_url"
+          #configuration_script=`basename $configuration_script_url`
+          #echo "script name: $configuration_script"
+          #curl -O $configuration_script_url
+          #chmod u+rx $configuration_script
+          #./$configuration_script
+          echo "unalias vi && unalias ls 2>/dev/null" >> /home/ec2-user/.bashrc 
+          sudo yum install -y docker git
+          sleep 5
+          sudo service docker start
+          sleep 10
+          sudo chown ec2-user /var/run/docker.sock
+  InstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable SSH access via port 22
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: '22'
+        ToPort: '22'
+        CidrIp:
+          Ref: SSHLocation
+      - IpProtocol: tcp
+        FromPort: '8080'
+        ToPort: '8080'
+        CidrIp:
+          Ref: SSHLocation
+      - IpProtocol: tcp
+        FromPort: '8443'
+        ToPort: '8443'
+        CidrIp:
+          Ref: SSHLocation
+
+Outputs:
+  InstanceId:
+    Description: InstanceId of the newly created EC2 instance
+    Value:
+      Ref: EC2Instance01
+  AZ:
+    Description: Availability Zone of the newly created EC2 instance
+    Value:
+      Fn::GetAtt:
+      - EC2Instance01
+      - AvailabilityZone
+  PublicDNS:
+    Description: Public DNSName of the newly created EC2 instance
+    Value:
+      Fn::GetAtt:
+      - EC2Instance01
+      - PublicDnsName
+  PublicIP:
+    Description: Public IP address of the newly created EC2 instance
+    Value:
+      Fn::GetAtt:
+      - EC2Instance01
+      - PublicIp
+EOF
+
+  if [ ! -r $cloudformation_template ]; then
+    _echo  "\n\n [`basename "$0"`] create_ec2_instance(): Error: Could not validate the cloudformation template <$cloudformation_template> \n\n"
+    exit 2
+  fi
+  if [ ! -r $aws_ec2_access_keyfile_name ]; then
+    _echo  "\n\n [`basename "$0"`]: create_ec2_instance(): Error: Could not validate the EC2 keyfilename <$aws_ec2_access_keyfile_name>.  Update the install shell script with the appropriate EC2 access key and key file name to create and access the <$ec2_instance_name> instance. \n\n"
+    exit 3
+  fi
+  aws_cloudformation_create_stack_command=`_echo aws cloudformation create-stack --stack-name $aws_cloudformation_stack_name --template-body "file://$cloudformation_template" --parameters ParameterKey=KeyName,ParameterValue=$aws_ec2_access_key_name ParameterKey=InstanceName,ParameterValue=$ec2_instance_name ParameterKey=AMIId,ParameterValue=$ec2_ami_id ParameterKey=ConfigurationScript,ParameterValue=$ec2_configuration_script_url`
+  _echo  "\n [`basename "$0"`]: create_ec2_instance(): Creating the AWS cloudformation stack with command: $aws_cloudformation_create_stack_command"
+  $aws_cloudformation_create_stack_command
+
+  #rm $cloudformation_template
+  sleep 15
+
+  # Note that if this were something other than a t2.micro instance, we should block here until the instance state is "Running"
+
+  # TO DO: Validate stack was created
+
+  ip_address_of_ec2_instance=`get_ec2_instance_public_ip_address $ec2_instance_name`
+
+  _echo  "\n  [`basename "$0"`] Use 'ssh -i $aws_ec2_access_keyfile_name $ec2_instance_ssh_username@$ip_address_of_ec2_instance' to access the EC2 target instance.\n"
+}
+
+#
+# A cleanup routine.  The stack can also be deleted from the AWS console.
+#
+delete_ec2_instance() {
+   _echo  "\n  [`basename "$0"`]: delete_ec2_instance(): Deleting stack "$aws_cloudformation_stack_name" \n\n"
+  aws cloudformation delete-stack --stack-name $aws_cloudformation_stack_name
+}
+
+#
+# Create a minishift node
+#
+#    source: https://fedoramagazine.org/run-openshift-locally-minishift/
+#    hints: https://docs.okd.io/latest/minishift/getting-started/setting-up-virtualization-environment.html
+#
+minishift() {
+  # This probably only works with CentOS
+  sudo dnf install libvirt qemu-kvm
+  sudo usermod -a -G libvirt `whoami`
+  newgrp libvirt
+  systemctl start virtlogd
+  systemctl enable virtlogd systemctl start libvirtd systemctl enable libvirtd
+  sudo curl -L https://github.com/dhiltgen/docker-machine-kvm/releases/download/v0.7.0/docker-machine-driver-kvm -o /usr/local/bin/docker-machine-driver-kvm
+  sudo chmod +x /usr/local/bin/docker-machine-driver-kvm
+
+  wget https://github.com/minishift/minishift/releases/download/v1.1.0/minishift-1.1.0-linux-amd64.tgz
+  tar -xvf minishift-1.1.0-linux-amd64.tgz
+  cp minishift ~/bin/minishift
+ 
+  export PATH=~/bin:$PATH
+  _echo "export PATH=~/bin:$PATH" >> ~/.bashrc
+
+
+  minishift start
+  oc login -u system:admin
+
+
+#$ minishift oc-env
+#export PATH="/home/john/.minishift/cache/oc/v1.5.0:$PATH"
+## Run this command to configure your shell:
+## eval $(minishift oc-env)
+
+oc new-app https://github.com/openshift/nodejs-ex -l name=myapp
+oc logs -f bc/nodejs-ex
+oc expose svc/nodejs-ex
+
+minishift openshift service nodejs-ex -n myproject
+
+
+minishift stop
+
+
+}
+
+# Start of main program
+# Don't invoke this section if we're being called as a library
+if [ `basename "$0"` == $this_program_name ]; then
+  # Enable CLI access to any function
+  if [ $# -gt 0 ]; then
+    $@
+    exit 1
+  fi
+if [ ]; then
+  if [ "$import_new_ec2_access_key_from_file" == "true" ]; then
+    import_ec2_access_key
+  elif [ "$create_new_ec2_access_key" == "true" ]; then
+    create_ec2_access_key
+  fi
+fi
+  create_ec2_instance
+  #delete_ec2_instance
+fi
