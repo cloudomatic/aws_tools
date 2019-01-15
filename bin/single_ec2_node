@@ -4,11 +4,13 @@
 #  The purpose of this exercise is to set up a single-node Docker host using Cloudformation and the UserData method for EC2 instance configuration.  
 #  Note that the Cloudformation template is embedded inside this program.
 #
-
+#  Pay attention to the region and AWS image ID this runs under (see the cloudformation template embedded as a heredoc below).
+#
+#
 this_program_name="single_ec2_node"
 
 ### Project name - rotate this based on what you're doing at the moment
-project_name="docker1232"
+project_name="ci001"
 
 ###### Add the AWS CLI
 export PATH=$PATH:~/.local/bin
@@ -19,20 +21,33 @@ ec2_instance_name=$project_name
 create_new_ec2_access_key=false
 import_new_ec2_access_key_from_file=true
 aws_ec2_access_key_name=ec2_key_$project_name
-aws_ec2_access_keyfile_name=./keys/$project_name.pem
+#aws_ec2_access_keyfile_name=./keys/$project_name.pem
+aws_ec2_access_keyfile_name=./keys/docker1232.pem
 aws_cloudformation_stack_name=cf-stack-$project_name
-# This is vanilla AWS Linux for this region
+# This is vanilla AWS Linux for us-west-2
 ec2_ami_id=ami-6b8cef13
 ec2_instance_ssh_username=ec2-user
 
-if [ `uname -a | grep Darwin | wc -c` -gt 0 ]; then
-  # We're on the Mac, and 'echo  $@' doesn't seem to work.  Email me if you
-  #   know a workaround for this
-  alias _echo="echo $@"
-else
-  alias _echo="echo -e  $@"
-fi
+#if [ `uname -a | grep Darwin | wc -c` -gt 0 ]; then
+#  # We're on the Mac, and 'echo  $@' doesn't seem to work.  Email me if you
+#  #   know a workaround for this
+#  alias _echo="echo $1"
+#else
+#  alias _echo="echo -e $1"
+#fi
 
+
+#
+# For some reason "echo -e" doesn't work on a Mac
+#
+_echo() {
+  if [ `uname -a | grep Darwin | wc -c` -gt 0 ]; then
+    # We're on the Mac, and 'echo  $@' doesn't seem to work.  Email me if you  know a workaround for this
+    echo $@
+  else
+    echo -e $@
+  fi
+}
 
 #
 # Validates that the Python-based AWS CLI is available and that user credentials have been configured
@@ -103,7 +118,7 @@ get_ec2_instance_public_ip_address() {
   fi
   ip_address=`aws ec2 describe-instances --filters "Name=tag-value,Values=$instance_name" --query Reservations[0].Instances[0].PublicIpAddress | sed 's/\"//g'`
   if [ x$ip_address == xnull ] ||  [ x$ip_address == x ]; then
-    _echo "ERROR: get_instance_public_ip_address(): Could not retrieve an ip address for instance: [$instance_name]"
+    _echo "ERROR: get_ec2_instance_public_ip_address(): Could not retrieve an ip address for instance: [$instance_name]"
     exit 2
   fi
   _echo $ip_address
@@ -124,6 +139,22 @@ connect() {
 }
 
 #
+# Upload a file to the EC2 instance via SSH
+#
+upload_file() {  
+  ip_address=`get_ec2_instance_public_ip_address $ec2_instance_name`
+  if [ `_echo $ip_address | grep -i error | wc -c` -gt 2 ]; then
+    _echo  "\n\n [`basename "$0"`]: connect():  Error: Could not connect ($ip_address). \n\n"
+    exit  3
+  else
+    _echo  "\n [`basename "$0"`]: connect(): Connecting to $ip_address\n"
+    base_filename=`basename $1`
+    scp -i $aws_ec2_access_keyfile_name $1  ec2-user@$ip_address:/home/ec2-user/$base_filename
+  fi
+
+}
+
+#
 # Create an EC2 instance
 #
 create_ec2_instance() {
@@ -131,6 +162,16 @@ create_ec2_instance() {
     _echo  "\n\n [`basename "$0"`]: create_ec2_instance(): Error: Could not validate the AWS EC2 CLI.  Validate that the "aws" command is in the current PATH. \n\n"
     exit 1
   fi
+  if [ -z  $aws_cloudformation_stack_name ]; then
+    _echo  "\n\n [`basename "$0"`]: create_ec2_instance(): Error: Invalid stack name <$aws_cloudformation_stack_name> \n\n"
+    exit 1
+  fi
+  stack_exists=`aws cloudformation describe-stacks --stack-name $aws_cloudformation_stack_name --query Stacks[0].StackName --output text`
+  if [ "x$stack_exists" == "x$aws_cloudformation_stack_name" ]; then
+    _echo  "\n\n [`basename "$0"`]: create_ec2_instance(): Error: Stack <$aws_cloudformation_stack_name> exists (exiting) \n\n"
+    exit 1
+  fi
+
   # Create the cloudformation template
   cloudformation_template=./~cf.tmp
   cat << EOF > $cloudformation_template
@@ -200,7 +241,7 @@ Resources:
           echo "user: `whoami`"
           #configuration_script_url=${ConfigurationScript}
           #echo "url: $configuration_script_url"
-          #configuration_script=`basename $configuration_script_url`
+          #configuration_script=basename $configuration_script_url
           #echo "script name: $configuration_script"
           #curl -O $configuration_script_url
           #chmod u+rx $configuration_script
@@ -342,13 +383,13 @@ if [ `basename "$0"` == $this_program_name ]; then
     $@
     exit 1
   fi
-if [ ]; then
   if [ "$import_new_ec2_access_key_from_file" == "true" ]; then
-    import_ec2_access_key
+    echo import_ec2_access_key
   elif [ "$create_new_ec2_access_key" == "true" ]; then
     create_ec2_access_key
   fi
-fi
-  create_ec2_instance
-  #delete_ec2_instance
+  echo create_ec2_instance
+  echo delete_ec2_instance
+else 
+  echo "Libraries loaded"
 fi
